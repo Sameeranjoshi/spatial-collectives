@@ -1,49 +1,55 @@
 param color_1: color;
 param pe_id: u32;
-param row_id: u32;    // Add row position
-param col_id: u32;    // Add column position
+param root_id: u32;
 
 param POS_DIR: direction;
 param NEG_DIR: direction;
 param NUM_PES: u32;
+param timestamp: imported_module;
 
 var invalid_f32 = @zeros([1]f32);
 
-var fabout = @get_dsd(fabout_dsd, .{ .extent = 1, .fabric_color = color_1, .output_queue=@get_output_queue(3)});
-var fabin = @get_dsd(fabin_dsd, .{ .extent = 1, .fabric_color = color_1, .input_queue=@get_input_queue(3)});
+var fabout = @get_dsd(fabout_dsd, .{ .extent = 1, .fabric_color = color_1});
+var fabin = @get_dsd(fabin_dsd, .{ .extent = 1, .fabric_color = color_1});
 var mem = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{1} -> invalid_f32[i] });
 
-fn is_diagonal() bool {
-    return row_id == col_id;
-}
 
 fn configure_network() void {
-    // Block all non-diagonal nodes and nodes that should receive
-    if (!is_diagonal()) {
-        @block(color_1);
-    }
-
-    if (is_diagonal()) {
-        // Diagonal nodes only transmit in positive direction
-        @set_local_color_config(color_1, .{.routes = .{.rx = .{RAMP}, .tx = .{POS_DIR}}});
-    } else if (row_id > col_id) {
-        // Nodes to the right of diagonal receive from NEG_DIR
-        @set_local_color_config(color_1, .{.routes = .{.rx = .{NEG_DIR}, .tx = .{RAMP}}});
-    }
+  if (NUM_PES == 1) {
+    @comptime_assert(pe_id == root_id, "NUM_PES is 1, so pe_id must be equal to root_id");
+  }
+  if (pe_id != root_id) {
+    @block(color_1);
+  }
+  // positive direction
+  if (pe_id == root_id) { // this is the root PE
+    @set_local_color_config(color_1, .{.routes = .{.rx = .{RAMP}, .tx = .{POS_DIR, NEG_DIR}}});
+  } else if (pe_id < (NUM_PES - 1) and pe_id > root_id) {
+    @set_local_color_config(color_1, .{.routes = .{.rx = .{NEG_DIR}, .tx = .{RAMP, POS_DIR}}});
+  } else if (pe_id == (NUM_PES - 1)) {  // last PE
+    @set_local_color_config(color_1, .{.routes = .{.rx = .{NEG_DIR}, .tx = .{RAMP}}});
+  } else if (pe_id > 0 and pe_id < root_id) {
+    @set_local_color_config(color_1, .{.routes = .{.rx = .{POS_DIR}, .tx = .{RAMP, NEG_DIR}}});
+  } else if (pe_id == 0) {  // first PE
+    @set_local_color_config(color_1, .{.routes = .{.rx = .{POS_DIR}, .tx = .{RAMP}}});
+  }    
 }
 
-fn transfer_data(buf: [*]f32, count: u16, activate: local_task_id) void {
+fn transfer_data(buf: [*]f32, count: u16, tsc_start_ptr: *[3]u16, tsc_end_ptr: *[3]u16) void {
 
-    fabin = @set_dsd_length(fabin, count);
-    fabout = @set_dsd_length(fabout, count);
-    mem = @set_dsd_length(mem, count);
-    mem = @set_dsd_base_addr(mem, buf);
+  fabin = @set_dsd_length(fabin, count);
+  fabout = @set_dsd_length(fabout, count);
+  mem = @set_dsd_length(mem, count);
+  mem = @set_dsd_base_addr(mem, buf);
 
-    if (is_diagonal()) {
-        @fmovs(fabout, mem);  // Diagonal nodes send data
-    } else if (row_id > col_id) {
-        @fmovs(mem, fabin);   // Nodes to the right receive data
+  switch (pe_id) {
+    root_id => {  // root will send data to both directions
+      @fmovs(fabout, mem);
+    },
+    else => {
+      @fmovs(mem, fabin);
     }
+  }
 
-    @activate(activate);
+  // @activate(activate);
 }
