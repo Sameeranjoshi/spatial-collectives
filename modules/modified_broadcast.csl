@@ -9,9 +9,12 @@ param timestamp: imported_module;
 
 var invalid_f32 = @zeros([1]f32);
 
-var fabout = @get_dsd(fabout_dsd, .{ .extent = 1, .fabric_color = color_1});
-var fabin = @get_dsd(fabin_dsd, .{ .extent = 1, .fabric_color = color_1});
+var fabout = @get_dsd(fabout_dsd, .{ .extent = 1, .fabric_color = color_1, .output_queue=@get_output_queue(3)});
+var fabin = @get_dsd(fabin_dsd, .{ .extent = 1, .fabric_color = color_1, .input_queue=@get_input_queue(3)});
 var mem = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{1} -> invalid_f32[i] });
+const simprint = @import_module("<simprint>", .{ .enable = true });
+
+
 
 
 fn configure_network() void {
@@ -36,7 +39,7 @@ fn configure_network() void {
 }
 
 fn transfer_data(buf: [*]f32, count: u16, tsc_start_ptr: *[3]u16, tsc_end_ptr: *[3]u16) void {
-
+  simprint.print_string("fastCC\n");
   fabin = @set_dsd_length(fabin, count);
   fabout = @set_dsd_length(fabout, count);
   mem = @set_dsd_length(mem, count);
@@ -45,9 +48,12 @@ fn transfer_data(buf: [*]f32, count: u16, tsc_start_ptr: *[3]u16, tsc_end_ptr: *
   switch (pe_id) {
     root_id => {  // root will send data to both directions
       @fmovs(fabout, mem);
+      simprint.fmt_with_coords("Finished sending data from root_id, my pe_id: {d}, my data: {f}\n", .{pe_id, buf[0]});
     },
     else => {
       @fmovs(mem, fabin);
+      // Never reaches this line on non-diagonal PEs.
+      simprint.fmt_with_coords("Finished receiving data from non-root_id, my pe_id: {d}, my data: {f}\n", .{pe_id, buf[0]});
     }
   }
 
