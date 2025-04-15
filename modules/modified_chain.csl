@@ -40,21 +40,60 @@ fn get_out_color() color {
 fn configure_network() void {
   @block(in_color);
   @block(out_color);
-  if (POS_DIR == WEST) {  // lower traiangular
+  
+  if (POS_DIR == WEST) {  // lower triangular
     if (pe_id <= root_id) {
-      @set_local_color_config(in_color, .{.routes = .{.rx = .{POS_DIR}, .tx = .{RAMP}}});
-      @set_local_color_config(out_color, .{.routes = .{.rx = .{RAMP}, .tx = .{NEG_DIR}}});
+      // Active PEs in reduction
+      @set_local_color_config(in_color, .{
+        .routes = .{
+          .rx = .{POS_DIR}, 
+          .tx = .{RAMP}
+        }
+      });
+      @set_local_color_config(out_color, .{
+        .routes = .{
+          .rx = .{RAMP}, 
+          .tx = .{NEG_DIR}
+        }
+      });
+    } else {
+      // Pass-through configuration for PEs not in reduction
+      @set_local_color_config(in_color, .{
+        .routes = .{
+          .rx = .{POS_DIR}, 
+          .tx = .{NEG_DIR}
+        }
+      });
     }
   } else if (POS_DIR == EAST) { // upper triangular
     if (pe_id >= root_id) {
-      // @block(in_color);
-      @set_local_color_config(in_color, .{.routes = .{.rx = .{POS_DIR}, .tx = .{RAMP}}});
-      @set_local_color_config(out_color, .{.routes = .{.rx = .{RAMP}, .tx = .{NEG_DIR}}});
-    } 
+      // Active PEs in reduction
+      @set_local_color_config(in_color, .{
+        .routes = .{
+          .rx = .{POS_DIR}, 
+          .tx = .{RAMP}
+        }
+      });
+      @set_local_color_config(out_color, .{
+        .routes = .{
+          .rx = .{RAMP}, 
+          .tx = .{NEG_DIR}
+        }
+      });
+    } else {
+      // Pass-through configuration for PEs not in reduction
+      @set_local_color_config(in_color, .{
+        .routes = .{
+          .rx = .{POS_DIR}, 
+          .tx = .{NEG_DIR}
+        }
+      });
+    }
   }
 }
 
-fn transfer_data(buf: [*]f32, count: u16, activate: local_task_id, tsc_start_ptr: *[3]u16) void {
+fn transfer_data(buf: [*]f32, count: u16, tsc_start_ptr: *[3]u16) void {
+  // Set up DSDs with proper lengths
   fabin = @set_dsd_length(fabin, count);
   fabout = @set_dsd_length(fabout, count);
   mem = @set_dsd_length(mem, count);
@@ -66,27 +105,33 @@ fn transfer_data(buf: [*]f32, count: u16, activate: local_task_id, tsc_start_ptr
 
   timestamp.get_timestamp(tsc_start_ptr);
 
-  // RHS of root PE.
-  if (pe_id == root_id) {
-    // Root PE behavior
-    @fadds(mem, mem, fabin);
-  } else if (pe_id > root_id) {
-    if (pe_id == NUM_PES - 1) {
-      // Last PE behavior
-      @fmovs(fabout, mem);
-    } else {
-      // Middle PEs behavior
-      @fadds(fabout, mem, fabin);
+  if (POS_DIR == WEST) {  // lower triangular
+    if (pe_id <= root_id) {
+      if (pe_id == root_id) {
+        // Root PE accumulates final result
+        @fadds(mem, mem, fabin);
+      } else if (pe_id == 0) {
+        // First PE initiates chain
+        @fmovs(fabout, mem);
+      } else {
+        // Middle PEs accumulate and forward
+        @fadds(fabout, mem, fabin);
+      }
     }
-  } else if (pe_id < root_id) {
-    if (pe_id == 0) {
-      // First PE behavior
-      @fmovs(fabout, mem);
-    } else {
-      // Middle PEs behavior
-      @fadds(fabout, mem, fabin);
+    // PEs beyond root_id are configured for pass-through, no computation needed
+  } else {  // upper triangular
+    if (pe_id >= root_id) {
+      if (pe_id == root_id) {
+        // Root PE accumulates final result
+        @fadds(mem, mem, fabin);
+      } else if (pe_id == NUM_PES - 1) {
+        // Last PE initiates chain
+        @fmovs(fabout, mem);
+      } else {
+        // Middle PEs accumulate and forward
+        @fadds(fabout, mem, fabin);
+      }
     }
+    // PEs before root_id are configured for pass-through, no computation needed
   }
-
-  // @activate(activate);
 }
